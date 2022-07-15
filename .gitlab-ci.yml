@@ -1,0 +1,58 @@
+workflow:
+   rules:
+     - if: $CI_COMMIT_BRANCH != "main" && $CI_PIPELINE_SOURCE != "merge_request_event"
+       when: never
+     - when: always
+
+stages:
+  - test
+  - build
+  - deploy
+
+variables:
+  IMAGE_NAME: $CI_REGISTRY_IMAGE/microservice
+  IMAGE_TAG: "1.0"
+
+test_process:
+  stage: test 
+  image: node:17-alpine3.14
+  tags:
+    - docker
+  before_script:
+    - cd app
+    - npm install
+  script:
+    - npm test
+  artifacts:
+    reports:
+      junit: app/junit.xml
+
+build_image:
+  stage: build
+  tags:
+    - shell
+  script:
+    - docker build -t $IMAGE_NAME:$IMAGE_TAG .
+  
+push_gitlab_registry:
+  stage: build 
+  tags:
+    - shell
+  needs:
+    - build_image 
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - docker push $IMAGE_NAME:$IMAGE_TAG
+
+deploy_process:
+  stage: deploy 
+  tags:
+    - shell
+  before_script:
+    - echo "$SSH_PRIVATE_KEY" >> ~/.ssh/known_hosts
+    - chmod 644 ~/.ssh/known_hosts
+  script:
+    - ssh -o StrictHostKeyChecking=no aslan@172.16.8.15 "
+        docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY &&
+        docker run -d -p 3000:3000 $IMAGE_NAME:$IMAGE_TAG"
